@@ -2,6 +2,8 @@
 
 Hand writing classifier for Machine Learning class project
 
+Dataset link: https://www.kaggle.com/datasets/dhruvildave/english-handwritten-characters-dataset
+
 ## To download the sample data
 
 run the python file, install any missing pip dependencies

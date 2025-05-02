@@ -1,104 +1,101 @@
-import pandas as pd
 import os
 from PIL import Image
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
-from torch import is_tensor
 
-
-"""
-This module is a dataset class specific for handwriting recognition. 
-
-It uses PyTorch's Dataset class to load images and their corresponding labels 
-from a CSV file. Calls to __getitem__ will return a tuple of images and their 
-labels. 
-
-We use the DataLoader to handle most of the heavy lifting, including shuffling 
-and batching.
-"""
 class HandwritingDataset(Dataset):
-    """Initializes the dataset for handwriting recognition
-
-    Args:
-        csv_file (str): Path to the csv file with labels
-        img_dir (str): Directory with all the images
-        transform (callable, optional): Optional transform to be applied on a sample. 
     """
-    def __init__(self, csv_file, root_dir, transform=None):
-        self.labels = pd.read_csv(csv_file)
+    IAM word-level dataset loader.
+    
+    Reads ./handwriting-dataset/ascii/words.txt to get (image_path, label), 
+    builds nested file paths under ./words, and then maps each unique 
+    label to an integer label.
+    """
+    def __init__(self, root_dir, transform=None):
         self.root_dir = root_dir
         self.transform = transform
 
-    """Returns the number of samples in the dataset
-    
-    Returns:
-        int: Number of samples in the dataset
-    """
-    def __len__(self):
-        return len(self.labels)
+        # read the words file containing the correct labels to use 
+        ascii_path = os.path.join(root_dir, 'ascii', 'words.txt')
+        
+        # using list to hold (image_path, label) 
+        samples = []
+        with open(ascii_path, 'r') as f:
+            for line in f:
+                parts = line.strip().split()
+                if not parts:
+                    continue
+                img_id = parts[0]          
+                label = parts[-1]   
+                # collect the parts to build the image path 
+                parts  = img_id.split('-')          
+                subdir1 = parts[0]            
+                subdir2 = "-".join(parts[:2])     
 
-    """Returns a tuple of (image, label) for the given index
-    
-    Args:
-        idx (int): Index of the sample to be fetched
-        
-    Returns:
-        tuple: (image, label)
-    """
+                # creates the directory for the image as specified 
+                #   -> ./handwriting-dataset/words/XYZ/ABC-DEF/<image>.png
+                img_path = os.path.join(
+                    root_dir,
+                    'words',
+                    subdir1,
+                    subdir2,
+                    img_id + '.png'
+                )
+                
+                # add the image to the samples 
+                samples.append((img_path, label))
+
+        # create a sorted list of unique labels
+        all_labels = []
+        for _, label in samples:
+            if label not in all_labels:
+                all_labels.append(label)
+                
+        all_labels.sort()
+
+        # creates a dictionary to store label to index mapping. this makes 
+        # retrieval constant time for any sample
+        self.label2idx = {}
+        for idx in range(len(all_labels)):
+            self.label2idx[all_labels[idx]] = idx
+
+        # convert text labels to integer labels. 
+        self.samples = []
+        for path, label in samples:
+            int_label = self.label2idx[label]
+            self.samples.append((path, int_label))
+
+    def __len__(self):
+        return len(self.samples)
+
     def __getitem__(self, idx):
-        if is_tensor(idx):
-            idx = idx.tolist()
-            
-        img_name = self.labels.iloc[idx, 0]
-        img_label = self.labels.iloc[idx, 1]
-        img_path = os.path.join(self.root_dir, img_name)
+        # get the image path and label for the given index from our samples list
+        img_path, label = self.samples[idx]
         
-        img = Image.open(img_path).convert('RGB') 
+        # open the image file and convert it to RGB
+        img = Image.open(img_path).convert('RGB')
         
+        # apply any transformations to the image if specified 
         if self.transform:
             img = self.transform(img)
+            
+        return (img, label)
 
-        return (img, img_label)
-    
-    
-"""Returns a DataLoader for the handwriting dataset. It uses the ResNet 
-   transform specifications for image preprocessing. This goes in line with what 
-   we had in the project proposal.
 
-   Returns:
-         DataLoader: A PyTorch DataLoader object for the dataset
-"""
 def get_dataloader():
-    # Define the transformations for the dataset using the ResNet specs  
-    # The mean and std values are based on the ImageNet dataset, which i would 
-    # assume is fine for this as well. It may need to be tweaked
+    # ResNet‐style transforms
     transform = transforms.Compose([
-        transforms.Resize((224, 224)),  # This matches ResNet input size
+        transforms.Resize((224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(
             mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225]
+            std =[0.229, 0.224, 0.225]
         )
     ])
 
-    # Dataset root directory
-    root = './handwriting-dataset'
-
-    # Create the dataset
     dataset = HandwritingDataset(
-        csv_file=f"{root}/english.csv", 
-        root_dir=f"{root}",
+        root_dir='./handwriting-dataset',
         transform=transform
     )
 
-    # Create the dataloader
-    dataloader = DataLoader(
-        dataset, 
-        batch_size=32, 
-        shuffle=True, 
-        num_workers=4 
-        # pin_memory=True (if we wanna throw it on a GPU)
-    )
-
-    return dataloader
-
+    return DataLoader(dataset, batch_size=32, shuffle=True, num_workers=4)

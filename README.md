@@ -2,7 +2,7 @@
 
 Hand writing classifier for Machine Learning class project
 
-Dataset link: https://www.kaggle.com/datasets/dhruvildave/english-handwritten-characters-dataset
+Dataset link: https://fki.tic.heia-fr.ch/databases/iam-handwriting-database
 
 ## To download the sample data
 

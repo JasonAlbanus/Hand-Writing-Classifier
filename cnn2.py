@@ -93,16 +93,21 @@ def epoch_loop(model, loader, criterion, optimizer, device, scaler,
 # ---------- Main training ----------
 def train(num_epochs: int = 25, patience: int = 5):
     set_seed(42)
-    train_dl, val_dl = dataset.get_dataloaders(
-        transform=transforms.Compose([
-            transforms.RandomResizedCrop((128, 512), scale=(0.9, 1.1)),
-            transforms.RandomAffine(degrees=5, translate=(.05,.05)),
-            transforms.RandomPerspective(distortion_scale=.2, p=.3),
-            transforms.ToTensor()
-        ]),
-        val_transform=transforms.ToTensor(),
-        batch_size=64, num_workers=4
-    )
+
+    # --- keep the original call (no kwargs) -----------------------------
+    train_dl, val_dl = dataset.get_dataloaders()
+    # --------------------------------------------------------------------
+
+    #   Inject the transforms the loaders’ datasets should use
+    #   (HandwritingDataset keeps a writable .transform attribute)
+    train_dl.dataset.transform = transforms.Compose([
+        transforms.RandomResizedCrop((128, 512), scale=(0.9, 1.1)),
+        transforms.RandomAffine(degrees=5, translate=(.05, .05)),
+        transforms.RandomPerspective(distortion_scale=.2, p=.3),
+        transforms.ToTensor()
+    ])
+    val_dl.dataset.transform = transforms.ToTensor()
+    # --------------------------------------------------------------------
 
     num_classes = len(train_dl.dataset.label2idx)
     device = get_device()

@@ -45,7 +45,7 @@ class WordCNN(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # compute logits
         x = self.features(x)
-        x = x.flatten(1)
+        x = self.dropout(x.flatten(1))
         return self.classifier(x)
 
 """

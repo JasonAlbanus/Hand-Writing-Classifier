@@ -1,6 +1,6 @@
 import os
 from PIL import Image
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, random_split
 from torchvision import transforms
 
 class HandwritingDataset(Dataset):
@@ -82,7 +82,7 @@ class HandwritingDataset(Dataset):
         return (img, label)
 
 
-def get_dataloader():
+def get_dataloaders(train_split=0.8):
     # ResNet‐style transforms
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
@@ -98,4 +98,18 @@ def get_dataloader():
         transform=transform
     )
 
-    return DataLoader(dataset, batch_size=32, shuffle=True, num_workers=4)
+    # split dataset into training and testing datasets
+    train_size = int(train_split * len(dataset))
+    test_size = len(dataset) - train_size
+    
+    train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
+
+    # make the mapping available on the subsets too
+    for sub in (train_dataset, test_dataset):
+        sub.label2idx = dataset.label2idx
+        
+
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=4)
+    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, num_workers=4)
+
+    return train_loader, test_loader

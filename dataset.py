@@ -1,85 +1,72 @@
-import os
-from PIL import Image
+# dataset.py (add/replace the existing class)
+
+import os, random
+from PIL import Image, ImageFile, UnidentifiedImageError
 from torch.utils.data import Dataset, DataLoader, random_split
 from torchvision import transforms
 
+ImageFile.LOAD_TRUNCATED_IMAGES = True      # let PIL load truncated files when it can
+
 class HandwritingDataset(Dataset):
-    """
-    IAM word-level dataset loader.
-    
-    Reads ./handwriting-dataset/ascii/words.txt to get (image_path, label), 
-    builds nested file paths under ./words, and then maps each unique 
-    label to an integer label.
-    """
     def __init__(self, root_dir, transform=None):
-        self.root_dir = root_dir
+        self.root_dir  = root_dir
         self.transform = transform
+        ascii_path     = os.path.join(root_dir, "ascii", "words.txt")
 
-        # read the words file containing the correct labels to use 
-        ascii_path = os.path.join(root_dir, 'ascii', 'words.txt')
-        
-        # using list to hold (image_path, label) 
-        samples = []
-        with open(ascii_path, 'r') as f:
+        raw_samples = []          # (full_path, label) even if the PNG is bad
+        with open(ascii_path, "r", encoding="utf-8") as f:
             for line in f:
-                parts = line.strip().split()
-                if not parts:
+                if line.startswith("#"):        # comment
                     continue
-                img_id = parts[0]          
-                label = parts[-1]   
-                # collect the parts to build the image path 
-                parts  = img_id.split('-')          
-                subdir1 = parts[0]            
-                subdir2 = "-".join(parts[:2])     
+                cols = line.strip().split()
+                if not cols or cols[1] != "ok": # ‘err’ rows → skip
+                    continue
 
-                # creates the directory for the image as specified 
-                #   -> ./handwriting-dataset/words/XYZ/ABC-DEF/<image>.png
-                img_path = os.path.join(
-                    root_dir,
-                    'words',
-                    subdir1,
-                    subdir2,
-                    img_id + '.png'
+                img_id = cols[0]                # a01-117-05-02
+                label  = cols[-1]
+
+                sub1   = img_id.split("-")[0]   # a01
+                sub2   = "-".join(img_id.split("-")[:2])    # a01-117
+                path   = os.path.join(
+                    root_dir, "words", sub1, sub2, f"{img_id}.png"
                 )
-                
-                # add the image to the samples 
-                samples.append((img_path, label))
+                raw_samples.append((path, label))
 
-        # create a sorted list of unique labels
-        all_labels = []
-        for _, label in samples:
-            if label not in all_labels:
-                all_labels.append(label)
-                
-        all_labels.sort()
+        # ---------- filter out unreadable PNGs -------------------------------
+        good_samples = []
+        for p, lab in raw_samples:
+            try:
+                with Image.open(p) as im:
+                    im.verify()    # cheap; doesn’t decode pixels fully
+                good_samples.append((p, lab))
+            except (FileNotFoundError, UnidentifiedImageError, OSError):
+                # silently drop the corrupted/empty file
+                continue
 
-        # creates a dictionary to store label to index mapping. this makes 
-        # retrieval constant time for any sample
-        self.label2idx = {}
-        for idx in range(len(all_labels)):
-            self.label2idx[all_labels[idx]] = idx
+        # build label map
+        labels = sorted({lab for _, lab in good_samples})
+        self.label2idx = {lab: i for i, lab in enumerate(labels)}
+        self.samples   = [(p, self.label2idx[lab]) for p, lab in good_samples]
 
-        # convert text labels to integer labels. 
-        self.samples = []
-        for path, label in samples:
-            int_label = self.label2idx[label]
-            self.samples.append((path, int_label))
+        dropped = len(raw_samples) - len(self.samples)
+        if dropped:
+            print(f"[dataset] skipped {dropped} broken images")
 
-    def __len__(self):
-        return len(self.samples)
+    # -------------------------------------------------------------------------
+    def __len__(self): return len(self.samples)
 
     def __getitem__(self, idx):
-        # get the image path and label for the given index from our samples list
-        img_path, label = self.samples[idx]
-        
-        # open the image file and convert it to RGB
-        img = Image.open(img_path).convert('RGB')
-        
-        # apply any transformations to the image if specified 
+        path, label = self.samples[idx]
+        # A second guard in case PIL.lazy-decode still trips on a weird file
+        try:
+            img = Image.open(path).convert("RGB")
+        except (UnidentifiedImageError, OSError):
+            # pick another random sample instead of crashing
+            return self.__getitem__(random.randrange(len(self)))
         if self.transform:
             img = self.transform(img)
-            
-        return (img, label)
+        return img, label
+
 
 
 def get_dataloaders(train_split=0.8):

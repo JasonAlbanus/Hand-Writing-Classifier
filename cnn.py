@@ -3,6 +3,7 @@ import dataset
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import json
 from typing import Tuple, Optional, Dict, List
 
 def get_device() -> torch.device:
@@ -104,7 +105,8 @@ def train(model: nn.Module,
     model.to(device)
 
     optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=wd)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=2, verbose=True, min_lr=1e-5)
+
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
     scaler = torch.cuda.amp.GradScaler(enabled=(device.type == "cuda"))
 
@@ -121,8 +123,9 @@ def train(model: nn.Module,
                 va_loss, va_acc = _run_epoch(model, val_loader, criterion, None, None, device)
             hist["va_loss"].append(va_loss)
             hist["va_acc"].append(va_acc)
-
-        scheduler.step()
+            scheduler.step(va_loss)
+        else:
+            scheduler.step(tr_loss)
 
         print(f"Epoch {ep:02}/{epochs} | loss {tr_loss:.3f} | train {tr_acc:.3f} | val {va_acc:.3f}")
 
@@ -142,3 +145,4 @@ if __name__ == "__main__":
     history = train(net, tr_dl, va_dl, epochs=20, device=device)
 
     print("\nFinal val accuracy:", history["va_acc"][-1] if history["va_acc"] else "N/A")
+    #torch.save(net.state_dict(), "cnn_weights.pth")

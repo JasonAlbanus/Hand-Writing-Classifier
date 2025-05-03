@@ -3,7 +3,7 @@ import dataset
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, List
 
 def get_device() -> torch.device:
     # returns best available compute device
@@ -33,13 +33,14 @@ class WordCNN(nn.Module):
 
         self.features = nn.Sequential(
             # stacks 3 conv blocks
-            conv_block(3, 32),
-            conv_block(32, 64),
+            conv_block(3, 64),
             conv_block(64, 128),
-            nn.AdaptiveAvgPool2d((1, 1)),
+            conv_block(128, 256),
+            conv_block(256, 512),
+            nn.AdaptiveAvgPool2d(1),
         )
-
-        self.classifier = nn.Linear(128, num_classes)
+        self.dropout = nn.Dropout(0.3)
+        self.classifier = nn.Linear(512, num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # compute logits
@@ -54,111 +55,90 @@ class WordCNN(nn.Module):
 # train and validation loop
 def _run_epoch(
         model: nn.Module,
-        loader: torch.utils.data.DataLoader,
-        criterion: nn.Module,
-        optimizer: Optional[torch.optim.Optimizer],
-        device: torch.device,
-        log_interval: int = 100,
-        phase: str = "train") -> Tuple[float, float]:
-    is_train = optimizer is not None
-    model.train(is_train)
+        loader,
+        criterion,
+        optimizer: Optional[optim.Optimizer],
+        scaler: Optional[torch.cuda.amp.GradScaler],
+        device: torch.device) -> Tuple[float, float]:
 
-    # sum of per batch losses
-    running_loss = 0.0
-    # num of correct predictions
-    correct = 0
-    # total num samples
-    total = 0
+    train_mode = optimizer is not None
+    model.train(train_mode)
+    torch.set_grad_enabled(train_mode)
 
-    total_batches = len(loader)
-    torch.set_grad_enabled(is_train)
-    for batch_idx, (images, labels) in enumerate(loader):
-        images = images.to(device, non_blocking=True)
-        labels = labels.to(device, non_blocking=True)
+    total_loss = correct = seen = 0
+    autocast = torch.cuda.amp.autocast if device.type == "cuda" else torch.cpu.amp.autocast
 
-        if is_train:
+    for imgs, labels in loader:
+        imgs, labels = imgs.to(device), labels.to(device)
+
+        if train_mode:
             optimizer.zero_grad()
 
-        outputs = model(images)
-        loss = criterion(outputs, labels)
+        with autocast():
+            logits = model(imgs)
+            loss = criterion(logits, labels)
 
-        if is_train:
-            loss.backward()
-            optimizer.step()
+        if train_mode:
+            assert scaler is not None
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
-        # Accumulate metrics
-        running_loss += loss.item() * images.size(0)
-        _, preds = outputs.max(1)
-        correct += preds.eq(labels).sum().item()
-        total += labels.size(0)
+        total_loss += loss.item() * imgs.size(0)
+        correct += logits.argmax(1).eq(labels).sum().item()
+        seen += imgs.size(0)
 
-        # Console progress (only if requested)
-        if log_interval and ((batch_idx + 1) % log_interval == 0 or (batch_idx + 1) == total_batches):
-            percent = 100.0 * (batch_idx + 1) / total_batches
-            print(f"[{phase}] {batch_idx+1:>4}/{total_batches} ({percent:5.1f}%) | loss {loss.item():.4f}")
-
-    avg_loss = running_loss / total
-    avg_acc = correct / total
-    return avg_loss, avg_acc
+    return total_loss / seen, correct / seen
 
 
 def train(model: nn.Module,
-          train_loader: torch.utils.data.DataLoader,
-          val_loader: Optional[torch.utils.data.DataLoader] = None,
-          num_epochs : int = 10,
-          lr: float = 0.001,
-          weight_decay: float = 0.0001,
-          device: torch.device | None = None,
-          log_interval: int = 100) -> None:
+          train_loader,
+          val_loader=None,
+          epochs: int = 20,
+          lr: float = 0.03,
+          wd: float = 1e-4,
+          device: Optional[torch.device] = None) -> Dict[str, List[float]]:
+
     if device is None:
         device = get_device()
     model.to(device)
 
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=wd)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+    scaler = torch.cuda.amp.GradScaler(enabled=(device.type == "cuda"))
 
-    for epoch in range(num_epochs):
-        print(f"\n========== Epoch {epoch+1}/{num_epochs} ==========")
-        tr_loss, tr_acc = _run_epoch(
-            model, train_loader, criterion, optimizer, device,
-            log_interval=log_interval, phase="train",
-        )
+    hist: Dict[str, List[float]] = {k: [] for k in ("tr_loss", "tr_acc", "va_loss", "va_acc")}
 
+    for ep in range(1, epochs + 1):
+        tr_loss, tr_acc = _run_epoch(model, train_loader, criterion, optimizer, scaler, device)
+        hist["tr_loss"].append(tr_loss)
+        hist["tr_acc"].append(tr_acc)
+
+        va_loss = va_acc = 0.0
         if val_loader is not None:
             with torch.no_grad():
-                val_loss, val_acc = _run_epoch(
-                    model, val_loader, criterion, optimizer=None, device=device,
-                    log_interval=log_interval, phase="val",
-                )
-            print(
-                f"[epoch summary] train loss {tr_loss:.4f} acc {tr_acc:.4f} | "
-                f"val loss {val_loss:.4f} acc {val_acc:.4f}"
-            )
-        else:
-            print(f"[epoch summary] train loss {tr_loss:.4f} acc {tr_acc:.4f}")
+                va_loss, va_acc = _run_epoch(model, val_loader, criterion, None, None, device)
+            hist["va_loss"].append(va_loss)
+            hist["va_acc"].append(va_acc)
+
+        scheduler.step()
+
+        print(f"Epoch {ep:02}/{epochs} | loss {tr_loss:.3f} | train {tr_acc:.3f} | val {va_acc:.3f}")
+
+    return hist
 
 
-
-if __name__ == '__main__':
-    set_seed(42)
-
+if __name__ == "__main__":
+    set_seed()
     from dataset import get_dataloaders
-    train_dl, val_dl = get_dataloaders()
 
-    num_classes = len(train_dl.dataset.label2idx)
+    pin = torch.cuda.is_available()
+    tr_dl, va_dl = get_dataloaders()
+
     device = get_device()
+    net = WordCNN(len(tr_dl.dataset.label2idx))
 
-    print("Device       :", device)
-    print("Train samples:", len(train_dl.dataset))
-    print("Val samples  :", len(val_dl.dataset))
-    print("Num classes  :", num_classes)
+    history = train(net, tr_dl, va_dl, epochs=20, device=device)
 
-    net = WordCNN(num_classes)
-    train(
-        net,
-        train_dl,
-        val_dl,
-        num_epochs=10,
-        log_interval=100,
-        device=device,
-    )
+    print("\nFinal val accuracy:", history["va_acc"][-1] if history["va_acc"] else "N/A")

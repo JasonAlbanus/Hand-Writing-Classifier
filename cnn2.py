@@ -1,4 +1,4 @@
-import json, os, math, time
+import json, os, math, time, re
 from pathlib import Path
 from typing import Tuple, Optional, Dict, List
 import random, numpy as np
@@ -27,22 +27,18 @@ from torchvision.models import resnet18, ResNet18_Weights
 class WordCNN(nn.Module):
     def __init__(self, num_classes: int, dropout_p: float = 0.3):
         super().__init__()
-        w = ResNet18_Weights.IMAGENET1K_V1
-        net = resnet18(weights=w)
-        # 1) accept 1-channel or 3-channel: IAM is grayscale PNG but loader returns 3-ch RGB
-         # -------- keep high resolution --------
-        net.conv1.stride = (1, 1)                 # first conv
-        net.layer4[0].conv1.stride = (1, 1)      # main branch
-        net.layer4[0].downsample[0].stride = (1, 1)  # <-- add this line
-        # --------------------------------------
-        self.backbone = nn.Sequential(*list(net.children())[:-1])  # no FC
+        net = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
+        net.conv1.stride = (1, 1)
+        net.layer4[0].conv1.stride = (1, 1)
+        net.layer4[0].downsample[0].stride = (1, 1)
+        self.backbone = nn.Sequential(*list(net.children())[:-1])
         self.dropout  = nn.Dropout(dropout_p)
         self.dropblock = DropBlock2d(p=0.1, block_size=5)
         self.head     = nn.Linear(net.fc.in_features, num_classes)
 
     def forward(self, x):
-        x = self.backbone(x)                 
-        x = self.dropblock(x)                
+        x = self.backbone(x)
+        x = self.dropblock(x)
         x = x.flatten(1)
         return self.head(x)
 
@@ -52,22 +48,18 @@ class DropBlock2d(nn.Module):
         self.p = p; self.block_size = block_size
 
     def forward(self, x):
-        if not self.training or self.p == 0.:
-            return x
+        if not self.training or self.p == 0.: return x
         gamma = self.p / (self.block_size ** 2)
         mask = (torch.rand_like(x[:, :1]) < gamma).float()
-        mask = F.max_pool2d(
-            mask, kernel_size=self.block_size, stride=1,
-            padding=self.block_size // 2)
+        mask = F.max_pool2d(mask, kernel_size=self.block_size,
+                             stride=1, padding=self.block_size//2)
         return x * (1 - mask)
-
 
 # ---------- Training helpers ----------
 class CosineWithWarmup(optim.lr_scheduler._LRScheduler):
     def __init__(self, optimizer, warmup, total_steps):
         self.warmup = warmup; self.total = total_steps
         super().__init__(optimizer)
-
     def get_lr(self):
         step = self.last_epoch + 1
         if step <= self.warmup:
@@ -76,159 +68,134 @@ class CosineWithWarmup(optim.lr_scheduler._LRScheduler):
                                    max(1, self.total - self.warmup)))
         return [base * cos for base in self.base_lrs]
 
-
 def mixup(x, y, alpha: float = 0.2):
-    """Return mixed inputs and (y1, y2, λ) tuple for loss calc."""
     lam = np.random.beta(alpha, alpha)
     idx = torch.randperm(x.size(0), device=x.device)
     mixed_x = lam * x + (1 - lam) * x[idx]
     return mixed_x, (y, y[idx], lam)
 
+# compute one epoch
 def epoch_loop(model, loader, criterion, optimizer, device, scaler,
                phase: str, log_every: int = 100) -> Tuple[float, float]:
-    is_train = phase == "train"
+    is_train = (phase == "train")
     model.train(is_train)
     running_loss = correct = total = 0
-
     for i, (x, y) in enumerate(loader, 1):
         x, y = x.to(device), y.to(device)
-        # ─── augmentation applied only in training ──────────────────────
-        if is_train and random.random() < 0.8:          # 80 % of batches
+        # augment only for true training pass
+        if is_train and random.random() < 0.8:
             x, y = mixup(x, y, alpha=0.2)
-        # ────────────────────────────────────────────────────────────────
-        with autocast(device_type=device.type, enabled=(device.type == "cuda")):
+        with autocast(device_type=device.type, enabled=(device.type=="cuda")):
             out = model(x)
-            if isinstance(y, tuple):          # MixUp case
+            if isinstance(y, tuple):
                 y1, y2, lam = y
-                loss = lam * criterion(out, y1) + (1 - lam) * criterion(out, y2)
+                loss = lam * criterion(out, y1) + (1-lam) * criterion(out, y2)
             else:
                 loss = criterion(out, y)
-
+        # backward on training
         if is_train:
             optimizer.zero_grad(set_to_none=True)
             if scaler:
                 scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
+                scaler.step(optimizer); scaler.update()
             else:
                 loss.backward(); optimizer.step()
-
-        # accumulate loss
         running_loss += loss.item() * x.size(0)
-
-        # unpack mixup‐tuple if necessary, and compute accuracy on y1
-        if isinstance(y, tuple):
-            y1, y2, lam = y
-            y_true = y1
-        else:
-            y_true = y
-
+        # accuracy on un-mixed labels
+        if isinstance(y, tuple): y_true = y[0]
+        else: y_true = y
         preds = out.argmax(1)
         correct += preds.eq(y_true).sum().item()
         total += y_true.size(0)
-
         if log_every and i % log_every == 0:
-            print(f"{phase:5} [{i:>3}/{len(loader)}] "
-                  f"loss {loss.item():.3f}")
-
+            print(f"{phase:5} [{i}/{len(loader)}] loss {loss.item():.3f}")
     return running_loss/total, correct/total
 
 # ---------- Main training ----------
 def train(num_epochs: int = 25, patience: int = 5):
     set_seed(42)
-
     train_dl, val_dl = dataset.get_dataloaders()
-
-    # --- safer augmentation for IAM ------------------------------------
+    # ---------- filter punctuation labels ----------
+    pattern = re.compile(r'^[A-Za-z]+$')
+    filtered = [(p, l) for p, l in train_dl.dataset.samples if pattern.match(l)]
+    train_dl.dataset.samples = filtered
+    labels = sorted({l for _, l in filtered})
+    train_dl.dataset.label2idx = {l:i for i, l in enumerate(labels)}
+    train_dl.dataset.idx2label = {i:l for l,i in train_dl.dataset.label2idx.items()}
+    # reassign transforms -------------------------------
     def keep_ratio_resize(h=128):
         return transforms.Lambda(
             lambda img: transforms.functional.resize(
-                img, size=(h, int(img.width * h / img.height))
-            )
+                img, size=(h, int(img.width * h / img.height)))
         )
-
     train_dl.dataset.transform = transforms.Compose([
-        keep_ratio_resize(128),                      # keep aspect ratio
-        transforms.Pad((0, 0, 16, 0), fill=255),     # pad RHS 16 px
-        transforms.RandomAffine(degrees=4,
-                                translate=(0.03, 0.03),
-                                scale=(0.95, 1.05)),
-        transforms.ToTensor()
+        keep_ratio_resize(128), transforms.Pad((0,0,16,0), fill=255),
+        transforms.RandomAffine(degrees=4, translate=(0.03,0.03), scale=(0.95,1.05)),
+        transforms.ToTensor(),
     ])
     val_dl.dataset.transform = transforms.ToTensor()
-    # --------------------------------------------------------------------
-
+    # ----------------------------------------------------
     num_classes = len(train_dl.dataset.label2idx)
     device = get_device()
     print("Using", device)
-
     model = WordCNN(num_classes).to(device)
     criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
-    # ↑ learning-rate from start, decay each epoch
     optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=5e-5)
-    swa_start = 25                        # begin averaging after epoch 25
+    swa_start = 25
     swa_model = AveragedModel(model)
     swa_scheduler = SWALR(optimizer, swa_lr=2e-4)
-    
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=8, gamma=0.3)
-    scaler = GradScaler(device_type=device.type, enabled=(device.type == "cuda"))
+    scaler = GradScaler(device_type=device.type, enabled=(device.type=="cuda"))
 
-    best_val = 0.0
-    history: Dict[str, List[float]] = {"tr_loss": [], "tr_acc": [],
-                                       "val_loss": [], "val_acc": []}
-    wait = 0
-    best_epoch = 0
+    best_val=0.0; wait=0; best_epoch=0
+    history = {"tr_loss":[], "tr_acc":[], "val_loss":[], "val_acc":[]}
+
     for epoch in range(1, num_epochs+1):
         print(f"\nEpoch {epoch}/{num_epochs}")
-        tl, ta = epoch_loop(model, train_dl, criterion,
-                            optimizer, device, scaler, "train")
+        # training pass (augmented)
+        tl, ta_aug = epoch_loop(model, train_dl, criterion,
+                                 optimizer, device, scaler, "train")
+        # clean-train metrics (unaugmented)
+        orig_tf = train_dl.dataset.transform
+        train_dl.dataset.transform = transforms.Compose([
+            keep_ratio_resize(128), transforms.Pad((0,0,16,0), fill=255), transforms.ToTensor()
+        ])
+        _, ta = epoch_loop(model, train_dl, criterion,
+                           optimizer, device, None, "val")
+        train_dl.dataset.transform = orig_tf
+        # validation metrics
         vl, va = epoch_loop(model, val_dl, criterion,
-                            optimizer, device, None, "val")
-
-        history["tr_loss"].append(tl); history["tr_acc"].append(ta)
-        history["val_loss"].append(vl); history["val_acc"].append(va)
+                             optimizer, device, None, "val")
+        history["tr_loss"].append(tl)
+        history["tr_acc"].append(ta)
+        history["val_loss"].append(vl)
+        history["val_acc"].append(va)
 
         print(f"summary: train {ta*100:5.2f}% | val {va*100:5.2f}%")
-
-        if va > best_val:
-            best_val = va
+        # early stop / save
+        if va>best_val:
+            best_val=va; best_epoch=epoch; wait=0
             torch.save(model.state_dict(), "model.dump")
-            best_epoch = epoch
-            wait = 0
         else:
-            wait += 1
-            if wait >= patience:
-                print("Early stopping.")
-                break
-            
-        if epoch >= swa_start:
-            swa_model.update_parameters(model)
-            swa_scheduler.step()
+            wait+=1
+            if wait>=patience:
+                print("Early stopping."); break
+        # LR scheduling
+        if epoch>=swa_start:
+            swa_model.update_parameters(model); swa_scheduler.step()
         else:
             scheduler.step()
-
-    # put your val transforms into the SAME “PREPROCESS” as inference
+    # finalize SWA
     val_dl.dataset.transform = transforms.Compose([
-        keep_ratio_resize(128),
-        transforms.Pad((0,0,16,0), fill=255),
-        transforms.ToTensor(),
+        keep_ratio_resize(128), transforms.Pad((0,0,16,0), fill=255), transforms.ToTensor()
     ])
-
-    # now fix the BN with clean data
     torch.optim.swa_utils.update_bn(val_dl, swa_model, device=device)
     torch.save(swa_model.state_dict(), "model.dump")
-
-    # write history
-    with open("history.json", "w") as f:
-        json.dump(history, f, indent=2)
-
-    print(f"\nBest validation accuracy {best_val*100:.2f}% "
-          f"(epoch {best_epoch})")
+    # save history
+    with open("history.json","w") as f: json.dump(history,f,indent=2)
+    print(f"\nBest validation accuracy {best_val*100:.2f}% (epoch {best_epoch})")
     print("Model weights  -> model.dump")
     print("Training curve -> history.json")
 
-
 if __name__ == "__main__":
-    start = time.time()
-    train()
-    print(f"Total wall-time {time.time()-start:.1f}s")
+    start=time.time(); train(); print(f"Total wall-time {time.time()-start:.1f}s")

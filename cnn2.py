@@ -130,6 +130,15 @@ def train(num_epochs: int = 25, patience: int = 5):
     labels = sorted([lab for lab in full.label2idx.keys() if pattern.match(lab)])
     full.label2idx = {lab: j for j, lab in enumerate(labels)}
     full.idx2label = {j: lab for lab, j in full.label2idx.items()}
+    # remap full.samples labels to new indices
+    new_samples = []
+    for p, old_idx in full.samples:
+        lab_str = idx2lab[old_idx]
+        if pattern.match(lab_str):
+            new_idx = full.label2idx[lab_str]
+            new_samples.append((p, new_idx))
+    full.samples = new_samples
+
 
     # transforms
     def keep_ratio_resize(h=128):

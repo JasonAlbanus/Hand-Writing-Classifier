@@ -6,6 +6,18 @@ from torchvision import transforms
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True      # let PIL load truncated files when it can
 
+import torch.nn.functional as F
+
+def right_pad_collate(batch):
+    """Pad every image in a batch to the same width on the right."""
+    imgs, labels = zip(*batch)            # imgs are C×H×W
+    widths = [img.shape[2] for img in imgs]
+    max_w  = max(widths)
+    padded = [F.pad(img, (0, max_w - w, 0, 0), value=1.0)   # 1.0 → white
+              for img, w in zip(imgs, widths)]
+    return torch.stack(padded), torch.tensor(labels)
+
+
 class HandwritingDataset(Dataset):
     def __init__(self, root_dir, transform=None):
         self.root_dir  = root_dir
@@ -98,7 +110,17 @@ def get_dataloaders(train_split=0.8):
         sub.label2idx = dataset.label2idx
         
 
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=4, pin_memory=True)
-    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, num_workers=4, pin_memory=True)
+    train_loader = DataLoader(train_dataset,
+                          batch_size=32,
+                          shuffle=True,
+                          num_workers=4,
+                          collate_fn=right_pad_collate,
+                          pin_memory=True)
 
+    test_loader   = DataLoader(test_dataset,
+                            batch_size=32,
+                            shuffle=False,
+                            num_workers=4,
+                            collate_fn=right_pad_collate,
+                            pin_memory=True)
     return train_loader, test_loader

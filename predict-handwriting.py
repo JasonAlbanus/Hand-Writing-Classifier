@@ -41,7 +41,6 @@ PREPROCESS = transforms.Compose([
             img, size=(128, int(img.width * 128 / img.height)))
     ),
     transforms.Lambda(pad_right_to),  
-    transforms.Pad((0, 0, 16, 0), fill=255),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485,0.456,0.406],
                      std =[0.229,0.224,0.225])

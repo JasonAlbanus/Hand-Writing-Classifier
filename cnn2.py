@@ -23,7 +23,7 @@ def set_seed(seed: int = 42):
     torch.backends.cudnn.benchmark = False
     
     
-def pad_right_to(img, target_w=256):
+def pad_right_to(img, target_w=320):
     """Pad on the right so every image is target_w x 128."""
     if img.width >= target_w:
         return img
@@ -131,7 +131,8 @@ def train(num_epochs: int = 25, patience: int = 5):
         transforms.Lambda(pad_right_to),
         transforms.RandomAffine(degrees=4,
                                 translate=(0.03, 0.03),
-                                scale=(0.95, 1.05)),
+                                scale=(0.95, 1.05),
+                                fill=255),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485,0.456,0.406],
                      std =[0.229,0.224,0.225])

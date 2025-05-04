@@ -28,8 +28,11 @@ class WordCNN(nn.Module):
         w = ResNet18_Weights.IMAGENET1K_V1
         net = resnet18(weights=w)
         # 1) accept 1-channel or 3-channel: IAM is grayscale PNG but loader returns 3-ch RGB
-        net.conv1.stride = (1, 1)          # keep more spatial info
-        net.layer4[0].conv1.stride = (1, 1)
+         # -------- keep high resolution --------
+        net.conv1.stride = (1, 1)                 # first conv
+        net.layer4[0].conv1.stride = (1, 1)      # main branch
+        net.layer4[0].downsample[0].stride = (1, 1)  # <-- add this line
+        # --------------------------------------
         self.backbone = nn.Sequential(*list(net.children())[:-1])  # no FC
         self.dropout  = nn.Dropout(dropout_p)
         self.head     = nn.Linear(net.fc.in_features, num_classes)

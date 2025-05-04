@@ -126,8 +126,8 @@ def train(num_epochs: int = 25, patience: int = 5):
     else:
         filtered = [(p, full.label2idx[l]) for p, l in full.samples if pattern.match(l)]
         full.samples = filtered
-    # now rebuild label maps
-    labels = sorted({idx2lab[idx] for idx, lab in full.label2idx.items() if pattern.match(idx2lab[idx])})
+    # now rebuild label maps (keep only alphabetic string labels)
+    labels = sorted([lab for lab in full.label2idx.keys() if pattern.match(lab)])
     full.label2idx = {lab: j for j, lab in enumerate(labels)}
     full.idx2label = {j: lab for lab, j in full.label2idx.items()}
 

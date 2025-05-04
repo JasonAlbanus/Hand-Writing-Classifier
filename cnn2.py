@@ -1,10 +1,12 @@
 import json, os, math, time
 from pathlib import Path
 from typing import Tuple, Optional, Dict, List
-
+import random, numpy as np
+import torch.nn.functional as F    
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.optim.swa_utils import AveragedModel, SWALR
 from torch.cuda.amp import autocast, GradScaler
 from torchvision import transforms
 
@@ -35,12 +37,30 @@ class WordCNN(nn.Module):
         # --------------------------------------
         self.backbone = nn.Sequential(*list(net.children())[:-1])  # no FC
         self.dropout  = nn.Dropout(dropout_p)
+        self.dropblock = DropBlock2d(p=0.1, block_size=5)
         self.head     = nn.Linear(net.fc.in_features, num_classes)
 
     def forward(self, x):
-        x = self.backbone(x).flatten(1)
-        x = self.dropout(x)
+        x = self.backbone(x)                 
+        x = self.dropblock(x)                
+        x = x.flatten(1)
         return self.head(x)
+
+class DropBlock2d(nn.Module):
+    def __init__(self, p: float = 0.1, block_size: int = 5):
+        super().__init__()
+        self.p = p; self.block_size = block_size
+
+    def forward(self, x):
+        if not self.training or self.p == 0.:
+            return x
+        gamma = self.p / (self.block_size ** 2)
+        mask = (torch.rand_like(x[:, :1]) < gamma).float()
+        mask = F.max_pool2d(
+            mask, kernel_size=self.block_size, stride=1,
+            padding=self.block_size // 2)
+        return x * (1 - mask)
+
 
 # ---------- Training helpers ----------
 class CosineWithWarmup(optim.lr_scheduler._LRScheduler):
@@ -56,6 +76,14 @@ class CosineWithWarmup(optim.lr_scheduler._LRScheduler):
                                    max(1, self.total - self.warmup)))
         return [base * cos for base in self.base_lrs]
 
+
+def mixup(x, y, alpha: float = 0.2):
+    """Return mixed inputs and (y1, y2, λ) tuple for loss calc."""
+    lam = np.random.beta(alpha, alpha)
+    idx = torch.randperm(x.size(0), device=x.device)
+    mixed_x = lam * x + (1 - lam) * x[idx]
+    return mixed_x, (y, y[idx], lam)
+
 def epoch_loop(model, loader, criterion, optimizer, device, scaler,
                phase: str, log_every: int = 100) -> Tuple[float, float]:
     is_train = phase == "train"
@@ -64,9 +92,18 @@ def epoch_loop(model, loader, criterion, optimizer, device, scaler,
 
     for i, (x, y) in enumerate(loader, 1):
         x, y = x.to(device), y.to(device)
+        # ─── augmentation applied only in training ──────────────────────
+        if is_train and random.random() < 0.8:          # 80 % of batches
+            x, y = mixup(x, y, alpha=0.2)
+        # ────────────────────────────────────────────────────────────────
         with autocast(enabled=scaler is not None):
             out = model(x)
-            loss = criterion(out, y)
+            if isinstance(y, tuple):          # MixUp case
+                y1, y2, lam = y
+                loss = lam * criterion(out, y1) + (1 - lam) * criterion(out, y2)
+            else:
+                loss = criterion(out, y)
+
         if is_train:
             optimizer.zero_grad(set_to_none=True)
             if scaler:
@@ -116,10 +153,13 @@ def train(num_epochs: int = 25, patience: int = 5):
     print("Using", device)
 
     model = WordCNN(num_classes).to(device)
-    criterion = nn.CrossEntropyLoss()                # ← no smoothing
-
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
     # ↑ learning-rate from start, decay each epoch
     optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=5e-5)
+    swa_start = 25                        # begin averaging after epoch 25
+    swa_model = AveragedModel(model)
+    swa_scheduler = SWALR(optimizer, swa_lr=2e-4)
+    
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=8, gamma=0.3)
     scaler = GradScaler(enabled=device.type == "cuda")
 
@@ -150,6 +190,18 @@ def train(num_epochs: int = 25, patience: int = 5):
             if wait >= patience:
                 print("Early stopping.")
                 break
+            
+        if epoch >= swa_start:
+            swa_model.update_parameters(model)
+            swa_scheduler.step()
+        else:
+            scheduler.step()
+
+    if num_epochs >= swa_start:
+        torch.optim.swa_utils.update_bn(train_dl, swa_model, device=device)
+        torch.save(swa_model.state_dict(), "model.dump")
+    else:
+        torch.save(model.state_dict(), "model.dump")
 
     # write history
     with open("history.json", "w") as f:

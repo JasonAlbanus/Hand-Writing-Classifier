@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim.swa_utils import AveragedModel, SWALR
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 from torchvision import transforms
 
 import dataset            # <- your existing dataset.py with get_dataloaders
@@ -96,7 +96,7 @@ def epoch_loop(model, loader, criterion, optimizer, device, scaler,
         if is_train and random.random() < 0.8:          # 80 % of batches
             x, y = mixup(x, y, alpha=0.2)
         # ────────────────────────────────────────────────────────────────
-        with autocast(enabled=scaler is not None):
+        with autocast(device_type=device.type, enabled=(device.type == "cuda")):
             out = model(x)
             if isinstance(y, tuple):          # MixUp case
                 y1, y2, lam = y
@@ -171,7 +171,7 @@ def train(num_epochs: int = 25, patience: int = 5):
     swa_scheduler = SWALR(optimizer, swa_lr=2e-4)
     
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=8, gamma=0.3)
-    scaler = GradScaler(enabled=device.type == "cuda")
+    scaler = GradScaler(device_type=device.type, enabled=(device.type == "cuda"))
 
     best_val = 0.0
     history: Dict[str, List[float]] = {"tr_loss": [], "tr_acc": [],

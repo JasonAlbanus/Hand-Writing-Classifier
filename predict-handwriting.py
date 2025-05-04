@@ -28,11 +28,19 @@ from torchvision.models import resnet18, ResNet18_Weights
 # -----------------------------------------------------------------------------
 # Preprocessing pipeline (match training)
 # -----------------------------------------------------------------------------
+def pad_right_to(img, target_w=256):
+    """Pad on the right so every image is target_w x 128."""
+    if img.width >= target_w:
+        return img
+    pad = target_w - img.width
+    return transforms.functional.pad(img, (0, 0, pad, 0), fill=255)
+
 PREPROCESS = transforms.Compose([
     transforms.Lambda(lambda img:
         transforms.functional.resize(
             img, size=(128, int(img.width * 128 / img.height)))
     ),
+    transforms.Lambda(pad_right_to),  
     transforms.Pad((0, 0, 16, 0), fill=255),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485,0.456,0.406],

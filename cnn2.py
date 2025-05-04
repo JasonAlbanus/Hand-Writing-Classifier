@@ -21,6 +21,14 @@ def set_seed(seed: int = 42):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+    
+    
+def pad_right_to(img, target_w=256):
+    """Pad on the right so every image is target_w x 128."""
+    if img.width >= target_w:
+        return img
+    pad = target_w - img.width
+    return transforms.functional.pad(img, (0, 0, pad, 0), fill=255)
 
 # ---------- Model ----------
 from torchvision.models import resnet18, ResNet18_Weights
@@ -120,7 +128,7 @@ def train(num_epochs: int = 25, patience: int = 5):
 
     train_tf = transforms.Compose([
         keep_ratio_resize(128),
-        transforms.Pad((0, 0, 16, 0), fill=255),
+        transforms.Lambda(pad_right_to),
         transforms.RandomAffine(degrees=4,
                                 translate=(0.03, 0.03),
                                 scale=(0.95, 1.05)),
@@ -131,7 +139,7 @@ def train(num_epochs: int = 25, patience: int = 5):
 
     clean_tf = transforms.Compose([
         keep_ratio_resize(128),
-        transforms.Pad((0, 0, 16, 0), fill=255),
+        transforms.Lambda(pad_right_to),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485,0.456,0.406],
                      std =[0.229,0.224,0.225])

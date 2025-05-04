@@ -166,14 +166,14 @@ def train(num_epochs: int = 25, patience: int = 5):
     best_val = 0.0
     history: Dict[str, List[float]] = {"tr_loss": [], "tr_acc": [],
                                        "val_loss": [], "val_acc": []}
-
+    wait = 0
+    best_epoch = 0
     for epoch in range(1, num_epochs+1):
         print(f"\nEpoch {epoch}/{num_epochs}")
         tl, ta = epoch_loop(model, train_dl, criterion,
                             optimizer, device, scaler, "train")
         vl, va = epoch_loop(model, val_dl, criterion,
                             optimizer, device, None, "val")
-        scheduler.step()                             # now really steps
 
         history["tr_loss"].append(tl); history["tr_acc"].append(ta)
         history["val_loss"].append(vl); history["val_acc"].append(va)
@@ -197,11 +197,16 @@ def train(num_epochs: int = 25, patience: int = 5):
         else:
             scheduler.step()
 
-    if num_epochs >= swa_start:
-        torch.optim.swa_utils.update_bn(train_dl, swa_model, device=device)
-        torch.save(swa_model.state_dict(), "model.dump")
-    else:
-        torch.save(model.state_dict(), "model.dump")
+    # put your val transforms into the SAME “PREPROCESS” as inference
+    val_dl.dataset.transform = transforms.Compose([
+        keep_ratio_resize(128),
+        transforms.Pad((0,0,16,0), fill=255),
+        transforms.ToTensor(),
+    ])
+
+    # now fix the BN with clean data
+    torch.optim.swa_utils.update_bn(val_dl, swa_model, device=device)
+    torch.save(swa_model.state_dict(), "model.dump")
 
     # write history
     with open("history.json", "w") as f:

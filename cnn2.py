@@ -20,31 +20,24 @@ def set_seed(seed: int = 42):
     torch.backends.cudnn.benchmark = False
 
 # ---------- Model ----------
+from torchvision.models import resnet18, ResNet18_Weights
+
 class WordCNN(nn.Module):
-    """Slightly deeper but still fast CNN for IAM word images"""
-    def __init__(self, num_classes: int, p_drop: float = 0.2):
+    def __init__(self, num_classes: int, dropout_p: float = 0.3):
         super().__init__()
-        def block(in_c, out_c):
-            return nn.Sequential(
-                nn.Conv2d(in_c, out_c, 3, padding=1, bias=False),
-                nn.BatchNorm2d(out_c),
-                nn.ReLU(inplace=True),
-                nn.Dropout2d(p_drop),
-                nn.MaxPool2d(2)
-            )
+        w = ResNet18_Weights.IMAGENET1K_V1
+        net = resnet18(weights=w)
+        # 1) accept 1-channel or 3-channel: IAM is grayscale PNG but loader returns 3-ch RGB
+        net.conv1.stride = (1, 1)          # keep more spatial info
+        net.layer4[0].conv1.stride = (1, 1)
+        self.backbone = nn.Sequential(*list(net.children())[:-1])  # no FC
+        self.dropout  = nn.Dropout(dropout_p)
+        self.head     = nn.Linear(net.fc.in_features, num_classes)
 
-        self.features = nn.Sequential(
-            block(3, 64),
-            block(64, 128),
-            block(128, 256),
-            block(256, 512),
-            nn.AdaptiveAvgPool2d(1)
-        )
-        self.classifier = nn.Linear(512, num_classes)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.features(x).flatten(1)
-        return self.classifier(x)
+    def forward(self, x):
+        x = self.backbone(x).flatten(1)
+        x = self.dropout(x)
+        return self.head(x)
 
 # ---------- Training helpers ----------
 class CosineWithWarmup(optim.lr_scheduler._LRScheduler):

@@ -1,5 +1,6 @@
 import os, random
 from PIL import Image, ImageFile, UnidentifiedImageError
+import torch
 from torch.utils.data import Dataset, DataLoader, random_split
 from torchvision import transforms
 
@@ -71,26 +72,26 @@ class HandwritingDataset(Dataset):
 
 
 def get_dataloaders(train_split=0.8):
-    # ResNet‐style transforms
-    transform = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize(
-            mean=[0.485, 0.456, 0.406],
-            std =[0.229, 0.224, 0.225]
-        )
-    ])
+    # # ResNet‐style transforms
+    # transform = transforms.Compose([
+    #     transforms.Resize((224, 224)),
+    #     transforms.ToTensor(),
+    #     transforms.Normalize(
+    #         mean=[0.485, 0.456, 0.406],
+    #         std =[0.229, 0.224, 0.225]
+    #     )
+    # ])
 
     dataset = HandwritingDataset(
         root_dir='./handwriting-dataset',
-        transform=transform
+        transform=None
     )
 
     # split dataset into training and testing datasets
     train_size = int(train_split * len(dataset))
     test_size = len(dataset) - train_size
-    
-    train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
+    rand_generator = torch.Generator().manual_seed(42)
+    train_dataset, test_dataset = random_split(dataset, [train_size, test_size], generator=rand_generator)
 
     # make the mapping available on the subsets too
     for sub in (train_dataset, test_dataset):

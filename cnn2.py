@@ -106,6 +106,10 @@ def epoch_loop(model, loader, criterion, optimizer, device, scaler,
 def train(num_epochs: int = 25, patience: int = 5):
     set_seed(42)
     train_dl, val_dl = dataset.get_dataloaders()
+    
+    # unwrap the Subset wrappers to get the underlying HandwritingDataset
+    base_train_ds = train_dl.dataset.dataset
+    base_val_ds   = val_dl.dataset.dataset
 
     # ---------- Transforms ----------
     def keep_ratio_resize(h=128):
@@ -121,16 +125,20 @@ def train(num_epochs: int = 25, patience: int = 5):
                                 translate=(0.03, 0.03),
                                 scale=(0.95, 1.05)),
         transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485,0.456,0.406],
+                     std =[0.229,0.224,0.225])
     ])
 
     clean_tf = transforms.Compose([
         keep_ratio_resize(128),
         transforms.Pad((0, 0, 16, 0), fill=255),
         transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485,0.456,0.406],
+                     std =[0.229,0.224,0.225])
     ])
 
-    train_dl.dataset.transform = train_tf
-    val_dl.dataset.transform = clean_tf
+    base_train_ds.transform = train_tf
+    base_val_ds.transform = clean_tf 
 
     num_classes = len(train_dl.dataset.label2idx)
     device = get_device()
@@ -156,11 +164,11 @@ def train(num_epochs: int = 25, patience: int = 5):
                            optimizer, device, scaler, "train")
 
         # clean-train accuracy
-        saved_tf = train_dl.dataset.transform
-        train_dl.dataset.transform = clean_tf
+        saved_tf = base_train_ds.transform
+        base_train_ds.transform = clean_tf
         _, ta = epoch_loop(model, train_dl, criterion,
-                           optimizer, device, None, "val")
-        train_dl.dataset.transform = saved_tf
+                           optimizer, device, None, "clean")
+        base_train_ds.transform = saved_tf
 
         # validation accuracy
         vl, va = epoch_loop(model, val_dl, criterion,
@@ -189,9 +197,15 @@ def train(num_epochs: int = 25, patience: int = 5):
             swa_scheduler.step()
         else:
             scheduler.step()
+            
+    
+    # save the *final* label map exactly once, after training loop
+    with open('label_map.json', 'w') as f:
+        json.dump(base_train_ds.label2idx, f)
+    # ------------------------------------------------------------
 
     # finalize SWA
-    val_dl.dataset.transform = clean_tf
+    base_val_ds.transform = clean_tf
     torch.optim.swa_utils.update_bn(val_dl, swa_model, device=device)
     torch.save(swa_model.state_dict(), "model.dump")
 

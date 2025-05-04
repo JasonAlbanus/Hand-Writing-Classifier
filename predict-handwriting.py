@@ -35,6 +35,8 @@ PREPROCESS = transforms.Compose([
     ),
     transforms.Pad((0, 0, 16, 0), fill=255),
     transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485,0.456,0.406],
+                     std =[0.229,0.224,0.225])
 ])
 
 # -----------------------------------------------------------------------------
@@ -152,7 +154,7 @@ def predict_topk(img: Image.Image, model, idx2label, device: str, k: int = 10):
 def normalise_crop(c: Image.Image) -> Image.Image:
     gray = c.convert('L')
     bw = gray.point(lambda p: 255 if p > 128 else 0, mode='1')
-    bw = ImageOps.invert(bw.convert('L'))
+    # bw = ImageOps.invert(bw.convert('L'))
     return bw.convert('RGB')
 
 # -----------------------------------------------------------------------------

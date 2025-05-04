@@ -20,31 +20,27 @@ def set_seed(seed: int = 42):
     torch.backends.cudnn.benchmark = False
 
 # ---------- Model ----------
+from torchvision.models import resnet18, ResNet18_Weights
+
 class WordCNN(nn.Module):
-    """Slightly deeper but still fast CNN for IAM word images"""
-    def __init__(self, num_classes: int, p_drop: float = 0.2):
+    def __init__(self, num_classes: int, dropout_p: float = 0.3):
         super().__init__()
-        def block(in_c, out_c):
-            return nn.Sequential(
-                nn.Conv2d(in_c, out_c, 3, padding=1, bias=False),
-                nn.BatchNorm2d(out_c),
-                nn.ReLU(inplace=True),
-                nn.Dropout2d(p_drop),
-                nn.MaxPool2d(2)
-            )
+        w = ResNet18_Weights.IMAGENET1K_V1
+        net = resnet18(weights=w)
+        # 1) accept 1-channel or 3-channel: IAM is grayscale PNG but loader returns 3-ch RGB
+         # -------- keep high resolution --------
+        net.conv1.stride = (1, 1)                 # first conv
+        net.layer4[0].conv1.stride = (1, 1)      # main branch
+        net.layer4[0].downsample[0].stride = (1, 1)  # <-- add this line
+        # --------------------------------------
+        self.backbone = nn.Sequential(*list(net.children())[:-1])  # no FC
+        self.dropout  = nn.Dropout(dropout_p)
+        self.head     = nn.Linear(net.fc.in_features, num_classes)
 
-        self.features = nn.Sequential(
-            block(3, 64),
-            block(64, 128),
-            block(128, 256),
-            block(256, 512),
-            nn.AdaptiveAvgPool2d(1)
-        )
-        self.classifier = nn.Linear(512, num_classes)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.features(x).flatten(1)
-        return self.classifier(x)
+    def forward(self, x):
+        x = self.backbone(x).flatten(1)
+        x = self.dropout(x)
+        return self.head(x)
 
 # ---------- Training helpers ----------
 class CosineWithWarmup(optim.lr_scheduler._LRScheduler):
@@ -94,16 +90,22 @@ def epoch_loop(model, loader, criterion, optimizer, device, scaler,
 def train(num_epochs: int = 25, patience: int = 5):
     set_seed(42)
 
-    # --- keep the original call (no kwargs) -----------------------------
     train_dl, val_dl = dataset.get_dataloaders()
-    # --------------------------------------------------------------------
 
-    #   Inject the transforms the loaders’ datasets should use
-    #   (HandwritingDataset keeps a writable .transform attribute)
+    # --- safer augmentation for IAM ------------------------------------
+    def keep_ratio_resize(h=128):
+        return transforms.Lambda(
+            lambda img: transforms.functional.resize(
+                img, size=(h, int(img.width * h / img.height))
+            )
+        )
+
     train_dl.dataset.transform = transforms.Compose([
-        transforms.RandomResizedCrop((128, 512), scale=(0.9, 1.1)),
-        transforms.RandomAffine(degrees=5, translate=(.05, .05)),
-        transforms.RandomPerspective(distortion_scale=.2, p=.3),
+        keep_ratio_resize(128),                      # keep aspect ratio
+        transforms.Pad((0, 0, 16, 0), fill=255),     # pad RHS 16 px
+        transforms.RandomAffine(degrees=4,
+                                translate=(0.03, 0.03),
+                                scale=(0.95, 1.05)),
         transforms.ToTensor()
     ])
     val_dl.dataset.transform = transforms.ToTensor()
@@ -114,10 +116,11 @@ def train(num_epochs: int = 25, patience: int = 5):
     print("Using", device)
 
     model = WordCNN(num_classes).to(device)
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
-    optimizer = optim.AdamW(model.parameters(), lr=3e-4, weight_decay=1e-4)
-    total_steps = num_epochs * len(train_dl)
-    scheduler = CosineWithWarmup(optimizer, warmup=500, total_steps=total_steps)
+    criterion = nn.CrossEntropyLoss()                # ← no smoothing
+
+    # ↑ learning-rate from start, decay each epoch
+    optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=5e-5)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=8, gamma=0.3)
     scaler = GradScaler(enabled=device.type == "cuda")
 
     best_val = 0.0
@@ -130,7 +133,7 @@ def train(num_epochs: int = 25, patience: int = 5):
                             optimizer, device, scaler, "train")
         vl, va = epoch_loop(model, val_dl, criterion,
                             optimizer, device, None, "val")
-        scheduler.step()
+        scheduler.step()                             # now really steps
 
         history["tr_loss"].append(tl); history["tr_acc"].append(ta)
         history["val_loss"].append(vl); history["val_acc"].append(va)

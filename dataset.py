@@ -1,5 +1,3 @@
-# dataset.py (add/replace the existing class)
-
 import os, random
 from PIL import Image, ImageFile, UnidentifiedImageError
 from torch.utils.data import Dataset, DataLoader, random_split
@@ -37,11 +35,15 @@ class HandwritingDataset(Dataset):
         for p, lab in raw_samples:
             try:
                 with Image.open(p) as im:
-                    im.verify()    # cheap; doesn’t decode pixels fully
+                    im.verify()
                 good_samples.append((p, lab))
             except (FileNotFoundError, UnidentifiedImageError, OSError):
-                # silently drop the corrupted/empty file
                 continue
+
+        # ---------- filter out punctuation labels ----------------------------
+        import re
+        pattern = re.compile(r'^[A-Za-z]+$')
+        good_samples = [(p, lab) for p, lab in good_samples if pattern.match(lab)]
 
         # build label map
         labels = sorted({lab for _, lab in good_samples})
@@ -66,7 +68,6 @@ class HandwritingDataset(Dataset):
         if self.transform:
             img = self.transform(img)
         return img, label
-
 
 
 def get_dataloaders(train_split=0.8):

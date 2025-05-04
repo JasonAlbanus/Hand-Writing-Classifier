@@ -12,3 +12,7 @@ run the python file, install any missing pip dependencies
 
 this avoids pushing it to the repo. take my word, unless ya'll wanna wait an
 afternoon for a `git pull`, this is the way to go.
+
+```
+ssh -o PubkeyAuthentication=no -o PreferredAuthentications=password -p 15080 cs4824@73.31.28.88
+```

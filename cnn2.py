@@ -112,6 +112,7 @@ def train(num_epochs: int = 25, patience: int = 5):
     train_dl, val_dl = dataset.get_dataloaders()
 
     # --------- filter punctuation labels for Subset ---------
+    pattern = re.compile(r'^[A-Za-z]+$')
     # we need string labels, so build reverse map
     ds = train_dl.dataset
     # original dataset is always a Subset of HandwritingDataset
@@ -120,13 +121,13 @@ def train(num_epochs: int = 25, patience: int = 5):
     idx2lab = {idx: lab for lab, idx in full.label2idx.items()}
     # keep only indices whose label string is alphabetic
     if isinstance(ds, Subset):
-        new_idx = [i for i in ds.indices if re.match(idx2lab[full.samples[i][1]])]
+        new_idx = [i for i in ds.indices if pattern.match(idx2lab[full.samples[i][1]])]
         ds.indices = new_idx
     else:
-        filtered = [(p, full.label2idx[l]) for p, l in full.samples if re.match(l)]
+        filtered = [(p, full.label2idx[l]) for p, l in full.samples if pattern.match(l)]
         full.samples = filtered
     # now rebuild label maps
-    labels = sorted({idx2lab[idx] for idx, lab in full.label2idx.items() if re.match(idx2lab[idx])})
+    labels = sorted({idx2lab[idx] for idx, lab in full.label2idx.items() if pattern.match(idx2lab[idx])})
     full.label2idx = {lab: j for j, lab in enumerate(labels)}
     full.idx2label = {j: lab for lab, j in full.label2idx.items()}
 

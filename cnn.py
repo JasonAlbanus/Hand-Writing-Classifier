@@ -105,7 +105,7 @@ def train(model: nn.Module,
     model.to(device)
 
     optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=wd)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=2, verbose=True, min_lr=1e-5)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=2, min_lr=1e-5)
 
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
     scaler = torch.cuda.amp.GradScaler(enabled=(device.type == "cuda"))

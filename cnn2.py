@@ -94,16 +94,22 @@ def epoch_loop(model, loader, criterion, optimizer, device, scaler,
 def train(num_epochs: int = 25, patience: int = 5):
     set_seed(42)
 
-    # --- keep the original call (no kwargs) -----------------------------
     train_dl, val_dl = dataset.get_dataloaders()
-    # --------------------------------------------------------------------
 
-    #   Inject the transforms the loaders’ datasets should use
-    #   (HandwritingDataset keeps a writable .transform attribute)
+    # --- safer augmentation for IAM ------------------------------------
+    def keep_ratio_resize(h=128):
+        return transforms.Lambda(
+            lambda img: transforms.functional.resize(
+                img, size=(h, int(img.width * h / img.height))
+            )
+        )
+
     train_dl.dataset.transform = transforms.Compose([
-        transforms.RandomResizedCrop((128, 512), scale=(0.9, 1.1)),
-        transforms.RandomAffine(degrees=5, translate=(.05, .05)),
-        transforms.RandomPerspective(distortion_scale=.2, p=.3),
+        keep_ratio_resize(128),                      # keep aspect ratio
+        transforms.Pad((0, 0, 16, 0), fill=255),     # pad RHS 16 px
+        transforms.RandomAffine(degrees=4,
+                                translate=(0.03, 0.03),
+                                scale=(0.95, 1.05)),
         transforms.ToTensor()
     ])
     val_dl.dataset.transform = transforms.ToTensor()
@@ -114,10 +120,11 @@ def train(num_epochs: int = 25, patience: int = 5):
     print("Using", device)
 
     model = WordCNN(num_classes).to(device)
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
-    optimizer = optim.AdamW(model.parameters(), lr=3e-4, weight_decay=1e-4)
-    total_steps = num_epochs * len(train_dl)
-    scheduler = CosineWithWarmup(optimizer, warmup=500, total_steps=total_steps)
+    criterion = nn.CrossEntropyLoss()                # ← no smoothing
+
+    # ↑ learning-rate from start, decay each epoch
+    optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=5e-5)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=8, gamma=0.3)
     scaler = GradScaler(enabled=device.type == "cuda")
 
     best_val = 0.0
@@ -130,7 +137,7 @@ def train(num_epochs: int = 25, patience: int = 5):
                             optimizer, device, scaler, "train")
         vl, va = epoch_loop(model, val_dl, criterion,
                             optimizer, device, None, "val")
-        scheduler.step()
+        scheduler.step()                             # now really steps
 
         history["tr_loss"].append(tl); history["tr_acc"].append(ta)
         history["val_loss"].append(vl); history["val_acc"].append(va)

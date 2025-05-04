@@ -111,14 +111,16 @@ def get_dataloaders(train_split=0.8):
         
 
     train_loader = DataLoader(train_dataset,
-                          batch_size=32,
+                          batch_size=16,
                           shuffle=True,
                           num_workers=4,
-                          collate_fn=right_pad_collate)
+                          collate_fn=right_pad_collate,
+                          pin_memory=True)
 
     test_loader   = DataLoader(test_dataset,
-                            batch_size=32,
+                            batch_size=16,
                             shuffle=False,
                             num_workers=4,
-                            collate_fn=right_pad_collate)
+                            collate_fn=right_pad_collate,
+                            pin_memory=True)
     return train_loader, test_loader

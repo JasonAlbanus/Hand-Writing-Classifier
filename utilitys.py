@@ -17,6 +17,28 @@ def plot_accuracy(train_accuracy, test_accuracy,epochs_arr):
     plt.tight_layout()
     plt.show()
 
+def plot_loss(train_loss, test_loss,epochs_arr):
+    #Plot Loss
+    plt.subplot(1, 1, 1)
+    plt.plot(epochs_arr, train_loss, label=f'Training Loss', color='blue')
+    plt.plot(epochs_arr, test_loss, label=f'Testing Loss', color='red')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.title(f'Loss vs Epochs')
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+def plot_learning_rate(learning_rate, epochs_arr):
+    plt.subplot(1, 1, 1)
+    plt.plot(epochs_arr, learning_rate, label=f'Learning Rate', color='blue')
+    plt.xlabel('Epochs')
+    plt.ylabel('Learning Rate')
+    plt.title(f'Learning Rate vs Epochs')
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
 
 def get_error_chars(ground_truths,predictions):
     substitutions = Counter()
@@ -36,7 +58,7 @@ def get_error_chars(ground_truths,predictions):
                 for c in pred[j1:j2]:
                     insertions[c] += 1
      # Plot top deletions
-    top_deletions = deletions.most_common(10)
+    top_deletions = deletions.most_common(5)
     chars, counts = zip(*top_deletions)
     plt.bar(chars, counts)
     plt.title("Top 10 Most Deleted Characters")

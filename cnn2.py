@@ -85,7 +85,7 @@ def epoch_loop(model, loader, criterion, optimizer, device, scaler,
         # augment only for true training pass
         if is_train and random.random() < 0.8:
             x, y = mixup(x, y, alpha=0.2)
-        with autocast(device_type=device.type, enabled=(device.type=="cuda")):
+        with autocast(device.type, enabled=(device.type=="cuda")):
             out = model(x)
             if isinstance(y, tuple):
                 y1, y2, lam = y
@@ -145,7 +145,7 @@ def train(num_epochs: int = 25, patience: int = 5):
     swa_model = AveragedModel(model)
     swa_scheduler = SWALR(optimizer, swa_lr=2e-4)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=8, gamma=0.3)
-    scaler = GradScaler(device_type=device.type, enabled=(device.type=="cuda"))
+    scaler = GradScaler(device.type, enabled=(device.type=="cuda"))
 
     best_val=0.0; wait=0; best_epoch=0
     history = {"tr_loss":[], "tr_acc":[], "val_loss":[], "val_acc":[]}

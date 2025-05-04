@@ -127,7 +127,7 @@ def train(model: nn.Module,
         else:
             scheduler.step(tr_loss)
 
-        print(f"Epoch {ep:02}/{epochs} | loss {tr_loss:.3f} | train {tr_acc:.3f} | val {va_acc:.3f}")
+        print(f"Epoch {ep:02}/{epochs} | lr {lr:.4f} | loss {tr_loss:.4f} | train {tr_acc:.4f} | val {va_acc:.4f}")
 
     return hist
 
@@ -145,4 +145,4 @@ if __name__ == "__main__":
     history = train(net, tr_dl, va_dl, epochs=20, device=device)
 
     print("\nFinal val accuracy:", history["va_acc"][-1] if history["va_acc"] else "N/A")
-    #torch.save(net.state_dict(), "cnn_weights.pth")
+    torch.save(net.state_dict(), "cnn_weights.pth")

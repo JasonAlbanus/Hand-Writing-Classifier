@@ -11,7 +11,7 @@ from torch.amp import autocast, GradScaler
 from torchvision import transforms
 from torch.utils.data import Subset
 
-import dataset            # <- your existing dataset.py with get_dataloaders
+import dataset            
 
 # ---------- Utility ----------
 def get_device() -> torch.device:
@@ -112,25 +112,23 @@ def train(num_epochs: int = 25, patience: int = 5):
     train_dl, val_dl = dataset.get_dataloaders()
 
     # --------- filter punctuation labels for Subset ---------
-    pattern = re.compile(r'^[A-Za-z]+$')
+    # we need string labels, so build reverse map
     ds = train_dl.dataset
+    # original dataset is always a Subset of HandwritingDataset
+    full = ds.dataset if isinstance(ds, Subset) else ds
+    # build idx->label string map
+    idx2lab = {idx: lab for lab, idx in full.label2idx.items()}
+    # keep only indices whose label string is alphabetic
     if isinstance(ds, Subset):
-        full = ds.dataset
-        # keep only indices with alphabetic labels
-        new_idx = [i for i in ds.indices if pattern.match(full.samples[i][1])]
+        new_idx = [i for i in ds.indices if re.match(idx2lab[full.samples[i][1]])]
         ds.indices = new_idx
-        # rebuild mapping on full.dataset
-        labels = sorted({full.samples[i][1] for i in new_idx})
-        full.label2idx = {l: j for j, l in enumerate(labels)}
-        full.idx2label = {j: l for l, j in full.label2idx.items()}
     else:
-        # direct dataset.samples
-        full = ds
-        filtered = [(p, l) for p, l in full.samples if pattern.match(l)]
+        filtered = [(p, full.label2idx[l]) for p, l in full.samples if re.match(l)]
         full.samples = filtered
-        labels = sorted({l for _, l in filtered})
-        full.label2idx = {l: j for j, l in enumerate(labels)}
-        full.idx2label = {j: l for l, j in full.label2idx.items()}
+    # now rebuild label maps
+    labels = sorted({idx2lab[idx] for idx, lab in full.label2idx.items() if re.match(idx2lab[idx])})
+    full.label2idx = {lab: j for j, lab in enumerate(labels)}
+    full.idx2label = {j: lab for lab, j in full.label2idx.items()}
 
     # transforms
     def keep_ratio_resize(h=128):

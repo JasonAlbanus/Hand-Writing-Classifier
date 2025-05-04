@@ -113,9 +113,19 @@ def epoch_loop(model, loader, criterion, optimizer, device, scaler,
             else:
                 loss.backward(); optimizer.step()
 
+        # accumulate loss
         running_loss += loss.item() * x.size(0)
-        correct += out.argmax(1).eq(y).sum().item()
-        total += y.size(0)
+
+        # unpack mixup‐tuple if necessary, and compute accuracy on y1
+        if isinstance(y, tuple):
+            y1, y2, lam = y
+            y_true = y1
+        else:
+            y_true = y
+
+        preds = out.argmax(1)
+        correct += preds.eq(y_true).sum().item()
+        total += y_true.size(0)
 
         if log_every and i % log_every == 0:
             print(f"{phase:5} [{i:>3}/{len(loader)}] "

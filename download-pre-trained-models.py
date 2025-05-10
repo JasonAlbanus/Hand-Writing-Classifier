@@ -1,13 +1,5 @@
-# I learned the hard way that pushing multi gig datasets to GitHub is a bad idea
-# and extremely painful to fix in the history.
-
-# Running this will download it which is already in the gitignore, thus wont be
-# pushed to the repo.
-
-import io
 import os
 import zipfile
-
 import requests
 from tqdm import tqdm
 
@@ -30,7 +22,7 @@ def download_with_progress(url, filename):
 
 # I used my ftp server to host the dataset, just makes it easier
 dataset_link = "https://ftp.cameronwsmith.com/pub/other/pre-trained.zip"
-local_file = "./handwriting-dataset.zip"
+local_file = "./pre-trained.zip"
 
 
 def main():
@@ -38,7 +30,7 @@ def main():
         print("Models already downloaded")
         return
 
-    print("Downloading dataset... (this may take a while)")
+    print("Downloading pre-trained models...")
     download_with_progress(dataset_link, local_file)
 
     print("Done downloading, extracting dataset...")

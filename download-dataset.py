@@ -1,18 +1,8 @@
-# I learned the hard way that pushing multi gig datasets to GitHub is a bad idea
-# and extremely painful to fix in the history.
-
-# Running this will download it which is already in the gitignore, thus wont be
-# pushed to the repo.
-
-import io
 import os
 import zipfile
-
 import requests
 from tqdm import tqdm
 
-
-# Thank the lord to gemini for this work of art
 def download_with_progress(url, filename):
     response = requests.get(url, stream=True)
     total_size = int(response.headers.get("content-length", 0))
@@ -44,7 +34,7 @@ def main():
 
     print("Done downloading, extracting dataset...")
     with zipfile.ZipFile(local_file, "r") as zip_ref:
-        zip_ref.extractall("./handwriting-dataset")
+        zip_ref.extractall("./")
 
     print("Dataset extracted")
     os.remove(local_file)
@@ -52,4 +42,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

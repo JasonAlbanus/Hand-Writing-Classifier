@@ -13,7 +13,7 @@ Once the model file is downloaded, the frontend can be testing with the sample
 images stored in ./sample_images.
 
 Additional images can be found within the dataset directory (if downloaded) at
-./handwriting-dataset/words/_/_/\*.png.
+./handwriting-dataset/words/\*/\*/\*.png.
 
 To run the GUI pre-trained model prediction file:
 

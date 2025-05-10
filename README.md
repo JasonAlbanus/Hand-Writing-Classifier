@@ -2,6 +2,16 @@
 
 Hand writing classifier for Machine Learning class project
 
+## Project Description
+This project focuses on handwriting recognition, which means turning handwritten
+text in images into digital text. While scanning documents is easy, converting handwriting 
+into machine-readable text is hard because OCR (Optical Character Recognition) doesn't work well with handwriting. 
+That’s because handwriting varies a lot in shape, size, and style. To solve this, we use a deep learning model. 
+We train it using the IAM dataset, which includes pre-segmented words. The images are cleaned, resized, and labeled so the model can learn. 
+This repository includes the source code for this project as well as the project report.
+
+### Dataset Used
+
 Dataset link: https://fki.tic.heia-fr.ch/databases/iam-handwriting-database
 
 ## Testing the Model
